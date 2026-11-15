@@ -38,6 +38,15 @@ const SCHEMA = (bigint) => `
     created_at ${bigint} NOT NULL,
     PRIMARY KEY (doc_id, user_id)
   );
+  CREATE TABLE IF NOT EXISTS document_versions (
+    id TEXT PRIMARY KEY,
+    doc_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    title TEXT NOT NULL, content TEXT NOT NULL,
+    editor_id TEXT NOT NULL REFERENCES users(id),
+    reason TEXT NOT NULL DEFAULT 'edit',
+    created_at ${bigint} NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_versions_doc ON document_versions(doc_id, created_at);
   CREATE INDEX IF NOT EXISTS idx_docs_owner ON documents(owner_id);
   CREATE INDEX IF NOT EXISTS idx_shares_user ON shares(user_id);
 `;
@@ -66,6 +75,9 @@ async function postgresBackend(url) {
     ssl: local || process.env.PGSSL === 'disable' ? false : { rejectUnauthorized: true },
     max: 5,
   });
+  // An idle pooled connection can be dropped by the server (Neon suspends/restarts, network blips). Without this
+  // listener the 'error' event is unhandled and crashes the process. The pool discards the dead client and reconnects.
+  pool.on('error', (e) => console.error('[db] idle Postgres client error (will reconnect):', e.message));
   const toPg = (sql) => { let i = 0; return sql.replace(/\?/g, () => `$${++i}`); };
   await pool.query(SCHEMA('BIGINT'));
   return {

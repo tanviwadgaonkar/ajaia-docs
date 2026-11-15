@@ -16,7 +16,10 @@ class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 
-function createApp(db) {
+const VERSION_GROUP_MS = 5 * 60 * 1000;  // autosaves inside this window share one snapshot
+const MAX_VERSIONS = 10;                  // snapshots kept per document
+
+function createApp(db, { versionGroupMs = VERSION_GROUP_MS, maxVersions = MAX_VERSIONS } = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '2mb' }));
@@ -45,7 +48,29 @@ function createApp(db) {
     upsertShare: `INSERT INTO shares (doc_id,user_id,role,created_at) VALUES (?,?,?,?)
       ON CONFLICT(doc_id,user_id) DO UPDATE SET role = excluded.role`,
     delShare: 'DELETE FROM shares WHERE doc_id = ? AND user_id = ?',
+    latestVersion: 'SELECT created_at FROM document_versions WHERE doc_id = ? ORDER BY created_at DESC LIMIT 1',
+    insVersion: 'INSERT INTO document_versions (id,doc_id,title,content,editor_id,reason,created_at) VALUES (?,?,?,?,?,?,?)',
+    pruneVersions: `DELETE FROM document_versions WHERE doc_id = ? AND id NOT IN
+      (SELECT id FROM document_versions WHERE doc_id = ? ORDER BY created_at DESC, id DESC LIMIT ${Number(maxVersions)})`,
+    versions: `SELECT v.id,v.title,v.reason,v.created_at,u.name AS editor_name FROM document_versions v
+      JOIN users u ON u.id=v.editor_id WHERE v.doc_id = ? ORDER BY v.created_at DESC, v.id DESC`,
+    version: `SELECT v.*,u.name AS editor_name FROM document_versions v JOIN users u ON u.id=v.editor_id
+      WHERE v.id = ? AND v.doc_id = ?`,
+    setContent: 'UPDATE documents SET content = ?, updated_at = ? WHERE id = ?',
   };
+
+  // Stores the doc's CURRENT (pre-change) content as a snapshot. Autosaves are grouped: when a snapshot already
+  // exists inside the grouping window, no new one is made. Keeps only the newest `maxVersions`.
+  async function snapshot(doc, editorId, reason, { grouped }) {
+    if (!doc.content || doc.content === '<p></p>') return;            // nothing worth restoring
+    const now = Date.now();
+    if (grouped) {
+      const latest = await db.get(q.latestVersion, [doc.id]);
+      if (latest && now - latest.created_at < versionGroupMs) return;
+    }
+    await db.run(q.insVersion, [crypto.randomUUID(), doc.id, doc.title, doc.content, editorId, reason, now]);
+    await db.run(q.pruneVersions, [doc.id, doc.id]);
+  }
 
   const requireAuth = async (req, _res, next) => {
     const token = req.cookies.sid;
@@ -130,6 +155,7 @@ function createApp(db) {
       if (content.length > MAX_CONTENT) throw new HttpError(413, 'Document is too large');
       newContent = clean(content);
     }
+    if (newContent !== doc.content) await snapshot(doc, req.user.id, 'edit', { grouped: true });
     const now = Date.now();
     await db.run(q.updDoc, [newTitle, newContent, now, doc.id]);
     res.json({ id: doc.id, title: newTitle, updated_at: now });
@@ -167,6 +193,35 @@ function createApp(db) {
     if (role !== 'owner') throw new HttpError(403, 'Only the owner can manage sharing');
     await db.run(q.delShare, [doc.id, req.params.userId]);
     res.json({ ok: true });
+  });
+
+  // ---------- version history (owner only) ----------
+  const ownerOnly = async (req) => {
+    const { doc, role } = await loadDoc(req.params.id, req.user.id);
+    if (role !== 'owner') throw new HttpError(403, 'Only the owner can view or restore version history');
+    return doc;
+  };
+
+  api.get('/docs/:id/versions', async (req, res) => {
+    const doc = await ownerOnly(req);
+    res.json({ max: maxVersions, versions: await db.all(q.versions, [doc.id]) });
+  });
+
+  api.get('/docs/:id/versions/:vid', async (req, res) => {
+    const doc = await ownerOnly(req);
+    const v = await db.get(q.version, [req.params.vid, doc.id]);
+    if (!v) throw new HttpError(404, 'Version not found');
+    res.json({ id: v.id, title: v.title, content: v.content, reason: v.reason, created_at: v.created_at, editor_name: v.editor_name });
+  });
+
+  api.post('/docs/:id/versions/:vid/restore', async (req, res) => {
+    const doc = await ownerOnly(req);
+    const v = await db.get(q.version, [req.params.vid, doc.id]);
+    if (!v) throw new HttpError(404, 'Version not found');
+    await snapshot(doc, req.user.id, 'restore', { grouped: false });   // current content stays recoverable
+    const now = Date.now();
+    await db.run(q.setContent, [v.content, now, doc.id]);
+    res.json({ id: doc.id, title: doc.title, content: v.content, updated_at: now });
   });
 
   // ---------- import ----------

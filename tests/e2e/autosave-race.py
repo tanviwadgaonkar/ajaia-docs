@@ -11,9 +11,9 @@ kw = {'executable_path': os.environ['CHROME_PATH']} if os.environ.get('CHROME_PA
 with sync_playwright() as p:
     br = p.chromium.launch(args=['--no-sandbox'], **kw)
     pg = br.new_page()
-    pg.goto(BASE); pg.click('button:has-text("Alice")'); pg.click('button:has-text("Sign in")')
-    pg.wait_for_selector('text=My documents')
-    pg.click('text=+ New document'); pg.wait_for_selector('.ql-editor')
+    pg.goto(BASE); pg.wait_for_selector('.demo-user'); pg.click('.demo-user:has-text("Alice")'); pg.click('button:has-text("Sign in")')
+    pg.wait_for_selector('h1:has-text("Documents")')
+    pg.click('button:has-text("New document")'); pg.wait_for_selector('.ql-editor')
 
     puts, held = [], []   # PUT bodies in order; first PUT's route is held open (without blocking the browser)
     def intercept(route):

@@ -1,14 +1,15 @@
-# Video script — 3:30 to 4:30 min (Loom, record the live URL, not localhost)
+# Video script — 3:30 to 4:30 min (Loom; record the live site https://ajaia-docs-y5at.onrender.com)
 
-Setup before recording: two windows — normal (Alice) + incognito (Bob). Live URL loaded. Cut any cold-start wait (Render free sleeps; open the URL 1 min before recording).
+Before recording: open the live URL ~1 minute earlier (Render free sleeps). Two windows: normal (Alice) + private (Bob). Have a small `.docx` ready. Sign out/in as needed with the demo buttons (password `demo123`).
 
 | Time | Show | Say |
 |---|---|---|
-| 0:00–0:20 | Login screen | "Lightweight Google-Docs-style editor. Node, Express, SQLite, Quill. I scoped to editing, upload, sharing, persistence — depth over breadth." |
-| 0:20–1:20 | Alice → New document → rename → type heading, bold, italic, underline, bullet + numbered list → watch "Saved ✓" → **refresh** | "Autosave with visible status. Formatting stored as sanitized HTML, so structure survives refresh." |
-| 1:20–2:00 | Home → Import file → upload a .docx (have a heading + bullets ready) → opens as editable doc. Point at the "supports .txt .md .docx, 5 MB" hint | "Upload turns a file into a new editable doc. Mammoth for docx, marked for md. Limits stated in UI and README; bad types give clear errors." |
-| 2:00–3:10 | Share → add Bob (Can edit) + Carol (View only) → switch to incognito Bob → "Shared with me" badge → edit → switch back to Alice, change appears in ~4s → incognito Carol → read-only banner | "Owner/editor/viewer enforced on the server — viewer gets 403, strangers get 404 so doc existence isn't leaked. 'Collaboration' is polling, not CRDT." |
-| 3:10–3:50 | Terminal: `npm test` (5 green) — or the tests file briefly | "Tests cover the role × action matrix, validation + XSS stripping, import, formatting round-trip." |
-| 3:50–4:30 | ARCHITECTURE.md / AI_WORKFLOW.md on screen | "Cut: real-time co-editing, comments, version history, export. Next: Yjs, version history, Postgres. AI: Claude Code scaffolded the slice; I rejected better-sqlite3 and a bundler setup, and caught a 'null' rendering bug via screenshot. Verified with API tests plus a 3-browser Playwright run." |
+| 0:00–0:25 | Login screen: point at "Demo accounts" | "Lightweight Google-Docs-style editor: Express, Postgres on Neon, Quill, vanilla JS. Scope: editing, import, sharing, persistence, plus a polished UI and owner-only version history." |
+| 0:25–1:20 | Alice → New document → rename → heading, bold, italic, underline, bullet + numbered list → watch "Saved ✓" and word count → **refresh** | "Autosave with visible status. An edit-revision counter means a slow earlier save can't mark newer edits as saved. Content is stored as sanitized HTML and survives refresh." |
+| 1:20–1:55 | Dashboard → Import file → `.docx` → opens editable. Point at "supports .txt, .md, .docx up to 5 MB" | "Upload becomes a new editable document — Mammoth for docx, marked for markdown; limits are stated in the UI." |
+| 1:55–3:00 | Share → keyboard: type Bob, Enter (Can edit), Carol (View only); show Escape returning focus → private window Bob: "Shared with me / Can edit" → edit → Alice's tab updates in ~4 s → Carol: view-only banner | "Owner/editor/viewer enforced on the server: viewer gets 403, strangers get 404. 'Collaboration' is polling, not real-time or conflict-free — last write wins." |
+| 3:00–3:30 | Alice → History → preview → Restore | "Owner-only history: up to 10 snapshots, autosaves grouped, restoring saves the current text first. Additive database change — no data dropped." |
+| 3:30–4:00 | Terminal: `npm test` (green) | "8 API tests on SQLite and real Postgres, including viewer-can't-write and stranger-can't-read, history permissions, plus Playwright browser tests." |
+| 4:00–4:30 | ARCHITECTURE.md / AI_WORKFLOW.md | "Cut: real-time co-editing, comments, export. Next: Yjs collaboration. AI: Claude Code wrote the code and tests from my prompts; the notes list what was changed, what was verified, and what wasn't." |
 
-Tips: one take, no editing. Say what works, what you cut, why. Keep under 5:00.
+Say only what you actually did/checked; keep under 5:00. Don't claim the live deploy is verified until you've clicked through it.

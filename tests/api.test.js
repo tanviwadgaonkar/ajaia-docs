@@ -194,5 +194,66 @@ test('viewer cannot modify via API; unrelated user cannot access at all', async 
   assert.equal((await fetch(`${base}/api/docs/${d.id}`)).status, 401, 'anonymous blocked');
 });
 
+test('version history: snapshots, grouping, owner-only, restore keeps current content', async () => {
+  const alice = await login('alice@example.com');
+  const bob = await login('bob@example.com');       // editor
+  const carol = await login('carol@example.com');   // viewer
+  const dan = null;
+  const { data: d } = await alice('/docs', { method: 'POST', body: { title: 'History' } });
+  const save = (c, who = alice) => who(`/docs/${d.id}`, { method: 'PUT', body: { content: c } });
+  await save('<p>v1</p>');                              // empty -> v1: nothing worth snapshotting
+  assert.equal((await alice(`/docs/${d.id}/versions`)).data.versions.length, 0);
+  await save('<p>v2</p>');                              // snapshot of v1
+  await save('<p>v3</p>');                              // grouped (inside 5-minute window): no new snapshot
+  const list = (await alice(`/docs/${d.id}/versions`)).data;
+  assert.equal(list.versions.length, 1, 'frequent autosaves are grouped');
+  assert.equal(list.versions[0].editor_name, 'Alice Owner');
+  const v1 = (await alice(`/docs/${d.id}/versions/${list.versions[0].id}`)).data;
+  assert.equal(v1.content, '<p>v1</p>');
+
+  // Only the owner: editor/viewer -> 403 on list, preview, restore; stranger -> 404.
+  await alice(`/docs/${d.id}/shares`, { method: 'POST', body: { email: 'bob@example.com', role: 'editor' } });
+  await alice(`/docs/${d.id}/shares`, { method: 'POST', body: { email: 'carol@example.com', role: 'viewer' } });
+  for (const who of [bob, carol]) {
+    assert.equal((await who(`/docs/${d.id}/versions`)).status, 403);
+    assert.equal((await who(`/docs/${d.id}/versions/${v1.id}`)).status, 403);
+    assert.equal((await who(`/docs/${d.id}/versions/${v1.id}/restore`, { method: 'POST' })).status, 403);
+  }
+  assert.equal((await save('<p>v3</p>', bob)).status, 200, 'editor edits do not need history access');
+  const { data: other } = await alice('/docs', { method: 'POST', body: { title: 'Other doc' } });
+  assert.equal((await alice(`/docs/${other.id}/versions/${v1.id}`)).status, 404, 'version id is scoped to its own document');
+  assert.equal((await fetch(`${base}/api/docs/${d.id}/versions`)).status, 401);
+
+  // Restore: content goes back, and the pre-restore content becomes a version.
+  await save('<p>latest</p>');
+  const r = await alice(`/docs/${d.id}/versions/${v1.id}/restore`, { method: 'POST' });
+  assert.equal(r.status, 200);
+  assert.equal((await alice(`/docs/${d.id}`)).data.content, '<p>v1</p>');
+  const after = (await alice(`/docs/${d.id}/versions`)).data.versions;
+  assert.equal(after.length, 2);
+  assert.equal(after[0].reason, 'restore');
+  const saved = (await alice(`/docs/${d.id}/versions/${after[0].id}`)).data;
+  assert.equal(saved.content, '<p>latest</p>', 'pre-restore content is recoverable');
+});
+
+test('version history: keeps at most 10 snapshots and deleting a doc removes them', async () => {
+  // A second app instance over the SAME database with grouping disabled so every edit snapshots.
+  const s2 = await new Promise((r) => { const sv = createApp(db, { versionGroupMs: 0 }).listen(0, () => r(sv)); });
+  try {
+    const b2 = `http://127.0.0.1:${s2.address().port}`;
+    const lr = await fetch(b2 + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'alice@example.com', password: 'demo123' }) });
+    const cookie = lr.headers.get('set-cookie').split(';')[0];
+    const call = async (p, o = {}) => { const r = await fetch(b2 + '/api' + p, { method: o.method || 'GET', headers: { cookie, 'Content-Type': 'application/json' }, body: o.body && JSON.stringify(o.body) }); return { status: r.status, data: await r.json() }; };
+    const { data: d } = await call('/docs', { method: 'POST', body: { title: 'Many' } });
+    for (let i = 1; i <= 15; i++) await call(`/docs/${d.id}`, { method: 'PUT', body: { content: `<p>edit ${i}</p>` } });
+    const { data } = await call(`/docs/${d.id}/versions`);
+    assert.equal(data.versions.length, 10);
+    const newest = (await call(`/docs/${d.id}/versions/${data.versions[0].id}`)).data;
+    assert.equal(newest.content, '<p>edit 14</p>', 'newest snapshot is the state before the last edit');
+    await call(`/docs/${d.id}`, { method: 'DELETE' });
+    assert.equal((await db.get('SELECT COUNT(*) AS n FROM document_versions WHERE doc_id = ?', [d.id])).n, 0, 'cascade-deleted');
+  } finally { await new Promise((r) => s2.close(r)); }
+});
+
 });
 }
